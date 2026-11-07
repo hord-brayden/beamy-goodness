@@ -18,7 +18,7 @@ trap cleanup EXIT
 echo "→ Downloading Beam…"
 curl -fL --progress-bar "$URL" -o "$TMP/Beam.dmg"
 
-echo "→ Installing to $DEST…"
+echo "→ Installing to ${DEST}…"
 mkdir -p "$MNT"
 hdiutil attach "$TMP/Beam.dmg" -nobrowse -readonly -quiet -mountpoint "$MNT"
 pkill -x Beam 2>/dev/null || true
