@@ -35,6 +35,9 @@ So I made **Beam**. It does the thing. It's free. It fits in 2.7 MB, which is sm
 - 🔌 **Plug-and-play HDMI.** Plug in the projector and Beam takes it over fullscreen with *only* your mapping on it: no menus, desktop or cursor. Your laptop keeps the editor. Unplug, replug, and it figures it out.
 - 🪞 **One-click mirroring fix.** macOS mirroring your screen to the projector? Beam notices and gives you a **Fix it** button. You will never again open System Settings → Displays in a panic five minutes before showtime.
 - 🖼️ **GIFs, videos, images.** Drag them in from Finder. GIF, MP4, MOV, WebM, PNG, JPG, HEIC, WebP. They loop. They're GPU-accelerated. They just work.
+- ⭐ **Shapes, lots of them.** Circles, triangles, stars, hexagons, crosses, arrows and more. Add one, or drop in 100 at once as a grid, row, ring or random scatter, with rainbow colors and staggered *ripple* animations. They warp in perspective like everything else.
+- 🔁 **Repeat anything.** Make N copies of any surface, GIFs and all, in a row, grid or ring. Copies are grouped, so dragging one moves them all (hold `⌘` to grab just one).
+- 📋 **Copy & paste.** `⌘C`/`⌘V`/`⌘X` for surfaces. Copy any layer and paste it into one surface, the whole group, or every surface at once.
 - 📂 **Drop a whole folder.** Drop it on empty space for an instant grid of surfaces, or onto a surface for a crossfading **playlist**.
 - 🧅 **Layers & blend modes.** Stack color, gradients, media, playlists, text and calibration grids. Screen, multiply, overlay, difference, the works.
 - ✨ **Built-in effects.** Pulse, strobe, flicker, hue cycle, spin, breathe, slide. Make a still JPEG feel like a rave.
@@ -47,6 +50,9 @@ So I made **Beam**. It does the thing. It's free. It fits in 2.7 MB, which is sm
 <p align="center">
   <img src="docs/tutorial.png" width="440" alt="Beam's built-in tutorial explaining how to plug in a projector over HDMI">
   <img src="docs/folder-grid.png" width="440" alt="Dropping a folder of images into Beam lays them out as a grid of surfaces">
+</p>
+<p align="center">
+  <img src="docs/shapes.png" width="700" alt="A ring of 12 rainbow stars added in one click with Beam's Shapes tool, with a staggered ripple animation">
 </p>
 
 ## Install
@@ -76,6 +82,9 @@ It downloads the latest release, puts **Beam** in your Applications folder and o
 | Move | Drag the middle |
 | Pixel-perfect | `Tab` picks a corner, arrow keys nudge (`⇧` = 10px) |
 | Stop snapping | Hold `⌥` while dragging |
+| Lots of shapes | **◆ Shapes → Add lots at once** |
+| Copy / paste | `⌘C` / `⌘V` (surfaces) · ⧉ on a layer, then **Paste** / **Paste to all** |
+| Move one shape of a group | Hold `⌘` while dragging |
 | Get out of fullscreen | `Esc` |
 | Tutorial | `?` button or **Help → Beam Tutorial** |
 

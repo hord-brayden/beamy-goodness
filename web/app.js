@@ -37,6 +37,19 @@ const LAYER_DEFAULTS = {
   grid: { color: '#ffffff', div: 8 },
 };
 const PALETTE = [['#00e5ff', '#7c4dff'], ['#ff4fa3', '#ffb84f'], ['#3dffa8', '#008cff'], ['#ffe14f', '#ff3d3d'], ['#b44fff', '#4fd0ff']];
+// Surface shapes are clip-paths in the surface's own (pre-warp) space, so they warp with it.
+const SHAPES = {
+  rect: { label: 'Rectangle', clip: '' },
+  rounded: { label: 'Rounded', clip: 'inset(0 round 18%)' },
+  ellipse: { label: 'Circle', clip: 'ellipse(50% 50% at 50% 50%)' },
+  triangle: { label: 'Triangle', clip: 'polygon(50% 0, 100% 100%, 0 100%)' },
+  diamond: { label: 'Diamond', clip: 'polygon(50% 0, 100% 50%, 50% 100%, 0 50%)' },
+  pentagon: { label: 'Pentagon', clip: 'polygon(50% 0, 100% 38%, 82% 100%, 18% 100%, 0 38%)' },
+  hexagon: { label: 'Hexagon', clip: 'polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%)' },
+  star: { label: 'Star', clip: 'polygon(50% 0, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)' },
+  cross: { label: 'Cross', clip: 'polygon(35% 0, 65% 0, 65% 35%, 100% 35%, 100% 65%, 65% 65%, 65% 100%, 35% 100%, 35% 65%, 0 65%, 0 35%, 35% 35%)' },
+  arrow: { label: 'Arrow', clip: 'polygon(0 30%, 60% 30%, 60% 0, 100% 50%, 60% 100%, 60% 70%, 0 70%)' },
+};
 const FONTS = ['Helvetica Neue', 'Avenir Next', 'Futura', 'Gill Sans', 'Impact', 'Georgia',
   'Didot', 'Menlo', 'Courier New', 'Marker Felt', 'Chalkduster', 'system-ui'];
 const VIDEO_RE = /\.(mp4|m4v|mov|webm|ogv)$/i;
@@ -90,11 +103,11 @@ function defaultState() {
 function newSurface(x, y, w, h, name) {
   return {
     id: uid(), name: name || 'Surface', visible: true, locked: false, opacity: 1, blend: 'normal',
-    shape: 'rect', corners: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], layers: [],
+    shape: 'rect', group: null, corners: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], layers: [],
   };
 }
 function newLayer(type, extra) {
-  return Object.assign({ id: uid(), type, visible: true, opacity: 1, blend: 'normal', anim: 'none', speed: 1 },
+  return Object.assign({ id: uid(), type, visible: true, opacity: 1, blend: 'normal', anim: 'none', speed: 1, phase: 0 },
     JSON.parse(JSON.stringify(LAYER_DEFAULTS[type])), extra || {});
 }
 // Defensive load: project files come from disk, so coerce every field we rely on.
@@ -117,7 +130,8 @@ function normalize(raw) {
       locked: !!s.locked,
       opacity: clamp(num(s.opacity, 1), 0, 1),
       blend: BLENDS.includes(s.blend) ? s.blend : 'normal',
-      shape: s.shape === 'ellipse' ? 'ellipse' : 'rect',
+      shape: s.shape in SHAPES ? s.shape : 'rect',
+      group: typeof s.group === 'string' ? s.group : null,
       corners: s.corners.map((p) => [num(+p[0], 0), num(+p[1], 0)]),
       layers: (Array.isArray(s.layers) ? s.layers : [])
         .filter((L) => L && LAYER_DEFAULTS[L.type])
@@ -133,6 +147,7 @@ function normalizeLayer(L) {
   out.opacity = clamp(out.opacity, 0, 1);
   out.blend = BLENDS.includes(out.blend) ? out.blend : 'normal';
   out.anim = out.anim in ANIMS ? out.anim : 'none';
+  out.phase = clamp(out.phase, 0, 1);
   for (const k of ['color', 'c1', 'c2']) if (k in out) out[k] = safeColor(out[k], base[k]);
   if (out.type === 'media') out.kind = out.kind === 'video' ? 'video' : 'image';
   if (out.type === 'playlist') {
@@ -229,7 +244,7 @@ function renderSurfaces(root, st, opts) {
     el.style.opacity = s.opacity;
     el.style.mixBlendMode = s.blend;
     el.style.display = s.visible ? '' : 'none';
-    el.style.borderRadius = s.shape === 'ellipse' ? '50%' : '0';
+    el.style.clipPath = (SHAPES[s.shape] || SHAPES.rect).clip;
     el.classList.toggle('locked', !!s.locked);
     renderLayers(el, s, w, h, opts);
 
@@ -282,10 +297,12 @@ function renderLayers(el, s, w, h, opts) {
 
     const fx = le._fx;
     const a = ANIMS[L.anim];
-    const animKey = a ? `${L.anim}|${L.speed}` : '';
+    const animKey = a ? `${L.anim}|${L.speed}|${L.phase}` : '';
     if (le._anim !== animKey) {
       le._anim = animKey;
-      fx.style.animation = a ? `beam-${L.anim} ${(a[0] / Math.max(0.05, L.speed)).toFixed(3)}s ${a[1]} infinite` : '';
+      const dur = a ? a[0] / Math.max(0.05, L.speed) : 0;
+      // A negative delay starts the loop part-way through: that's how staggered "wave" effects work.
+      fx.style.animation = a ? `beam-${L.anim} ${dur.toFixed(3)}s ${a[1]} ${(-num(L.phase, 0) * dur).toFixed(3)}s infinite` : '';
     }
 
     switch (L.type) {
@@ -497,7 +514,8 @@ function drawOverlay() {
   for (const t of state.surfaces) {
     if (!t.visible) continue;
     const pts = t.corners.map(toScreen).map((p) => p.map((v) => v.toFixed(1)).join(',')).join(' ');
-    out += `<polygon class="outline${t.id === sel.surface ? ' sel' : ''}" points="${pts}"/>`;
+    const sib = s && s.group && t.group === s.group && t.id !== s.id;
+    out += `<polygon class="outline${t.id === sel.surface ? ' sel' : sib ? ' grp' : ''}" points="${pts}"/>`;
   }
   if (s && s.visible && !s.locked) {
     const c = s.corners.map(toScreen);
@@ -516,9 +534,10 @@ function drawOverlay() {
 }
 
 /* ---------- snapping */
-function snapCandidates(excludeId) {
+function snapCandidates(exclude) {
+  const ex = exclude instanceof Set ? exclude : new Set([exclude]);
   const pts = [[0, 0], [state.stage.w, 0], [state.stage.w, state.stage.h], [0, state.stage.h]];
-  for (const s of state.surfaces) if (s.visible && s.id !== excludeId) pts.push(...s.corners);
+  for (const s of state.surfaces) if (s.visible && !ex.has(s.id)) pts.push(...s.corners);
   return pts;
 }
 function snapPoint(p, excludeId) {
@@ -527,10 +546,10 @@ function snapPoint(p, excludeId) {
   for (const c of snapCandidates(excludeId)) { const d = dist(p, c); if (d < bd) { bd = d; best = c; } }
   return best ? [best[0], best[1]] : p;
 }
-function snapOffset(corners, excludeId) {
+function snapOffset(corners, exclude) {
   const th = 10 / view.k;
   let best = null, bd = th;
-  const cands = snapCandidates(excludeId);
+  const cands = snapCandidates(exclude);
   for (const p of corners) for (const c of cands) {
     const d = dist(p, c);
     if (d < bd) { bd = d; best = [c[0] - p[0], c[1] - p[1]]; }
@@ -554,7 +573,11 @@ viewport.addEventListener('pointerdown', (e) => {
     if (sEl) {
       if (sel.surface !== sEl.dataset.sid) { sel.surface = sEl.dataset.sid; sel.corner = null; refreshUI(); }
       const s = selected();
-      if (s && !s.locked) drag = { type: 'move', start: p, orig: s.corners.map((c) => c.slice()), sid: s.id };
+      if (s && !s.locked) {
+        const members = (e.metaKey ? [s] : groupOf(s)).filter((t) => !t.locked);
+        drag = { type: 'move', start: p, orig: s.corners.map((c) => c.slice()), sid: s.id,
+          group: new Map(members.map((t) => [t.id, t.corners.map((c) => c.slice())])) };
+      }
     } else {
       if (sel.surface) { sel.surface = null; sel.corner = null; refreshUI(); }
     }
@@ -571,9 +594,15 @@ viewport.addEventListener('pointermove', (e) => {
   if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
   const o = drag.orig;
   if (drag.type === 'move') {
-    let moved = o.map((c) => [c[0] + dx, c[1] + dy]);
-    if (!e.altKey) { const [sx, sy] = snapOffset(moved, s.id); moved = moved.map((c) => [c[0] + sx, c[1] + sy]); }
-    s.corners = moved;
+    let mx = dx, my = dy;
+    if (!e.altKey) {
+      const [sx, sy] = snapOffset(o.map((c) => [c[0] + dx, c[1] + dy]), new Set(drag.group.keys()));
+      mx += sx; my += sy;
+    }
+    for (const [id, orig] of drag.group) {
+      const t = findSurface(id);
+      if (t) t.corners = orig.map((c) => [c[0] + mx, c[1] + my]);
+    }
   } else if (drag.type === 'corner') {
     let q = [o[drag.idx][0] + dx, o[drag.idx][1] + dy];
     if (!e.altKey) q = snapPoint(q, s.id);
@@ -605,6 +634,9 @@ document.addEventListener('keydown', (e) => {
     else if (key === 'o' && !e.shiftKey) { e.preventDefault(); openProject(); }
     else if (key === 'd' && !isTyping()) { e.preventDefault(); duplicateSurface(); }
     else if (key === 'g') { e.preventDefault(); toggleCalibrate(); }
+    else if (key === 'c' && !isTyping() && selected()) { e.preventDefault(); doCopy(); }
+    else if (key === 'x' && !isTyping() && selected()) { e.preventDefault(); doCut(); }
+    else if (key === 'v' && !isTyping() && clip) { e.preventDefault(); doPaste(); }
     return;
   }
   if (isTyping()) return;
@@ -618,7 +650,8 @@ document.addEventListener('keydown', (e) => {
   const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
   if (d && !s.locked) {
     e.preventDefault();
-    s.corners = s.corners.map((c, i) => (sel.corner == null || sel.corner === i ? [c[0] + d[0], c[1] + d[1]] : c));
+    const targets = sel.corner == null ? groupOf(s).filter((t) => !t.locked) : [s];
+    targets.forEach((t) => (t.corners = t.corners.map((c, i) => (sel.corner == null || sel.corner === i ? [c[0] + d[0], c[1] + d[1]] : c))));
     changed();
     commitSoon();
   }
@@ -652,6 +685,155 @@ function duplicateSurface() {
   sel.surface = c.id;
   commit(); refreshUI(); changed();
 }
+/* ---------- groups + clipboard */
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const groupOf = (s) => (s && s.group ? state.surfaces.filter((t) => t.group === s.group) : s ? [s] : []);
+let clip = null;      // { kind: 'layers', layers } | { kind: 'surfaces', surfaces }
+let pasteCount = 0;
+const freshLayer = (L) => ({ ...clone(L), id: uid() });
+
+function copyLayers(layers, label) {
+  if (!layers.length) return;
+  clip = { kind: 'layers', layers: clone(layers) };
+  PM.toast(`Copied ${label}. Select any surface and press ⌘V, or use Paste in the Layers panel`);
+  renderInspector();
+}
+function pasteLayersInto(targets) {
+  if (!clip || clip.kind !== 'layers' || !targets.length) return;
+  targets.forEach((t) => clip.layers.forEach((L) => t.layers.push(freshLayer(L))));
+  commit(); refreshUI(); changed();
+  PM.toast(`Pasted ${clip.layers.length} layer(s) into ${targets.length === 1 ? targets[0].name : targets.length + ' surfaces'}`);
+}
+function copySurfaces(list) {
+  clip = { kind: 'surfaces', surfaces: clone(list) };
+  pasteCount = 0;
+  PM.toast(list.length === 1 ? `Copied “${list[0].name}”. ⌘V to paste` : `Copied a group of ${list.length} surfaces. ⌘V to paste`);
+  renderInspector();
+}
+function doCopy() { const s = selected(); if (s) copySurfaces(groupOf(s)); }
+function doCut() {
+  const s = selected();
+  if (!s) return;
+  const list = groupOf(s);
+  copySurfaces(list);
+  const ids = new Set(list.map((t) => t.id));
+  state.surfaces = state.surfaces.filter((t) => !ids.has(t.id));
+  sel.surface = null; sel.corner = null;
+  commit(); refreshUI(); changed();
+}
+function doPaste() {
+  if (!clip) return PM.toast('Nothing copied yet');
+  if (clip.kind === 'layers') {
+    const s = selected();
+    if (s) return pasteLayersInto([s]);
+    const n = addSurface();
+    n.layers.push(...clip.layers.map(freshLayer));
+    commit(); refreshUI(); changed();
+    return;
+  }
+  pasteCount++;
+  const off = 30 * pasteCount, groups = {};
+  const made = clip.surfaces.map((src) => {
+    const c = clone(src);
+    c.id = uid();
+    c.locked = false;
+    c.corners = c.corners.map(([x, y]) => [x + off, y + off]);
+    c.layers.forEach((L) => (L.id = uid()));
+    if (c.group) c.group = groups[c.group] || (groups[c.group] = uid());
+    return c;
+  });
+  state.surfaces.push(...made);
+  sel.surface = made[made.length - 1].id; sel.corner = null;
+  commit(); refreshUI(); changed();
+  PM.toast(`Pasted ${made.length === 1 ? '“' + made[0].name + '”' : made.length + ' surfaces'}`);
+}
+// Fallback for the Edit menu's Copy/Cut/Paste (they arrive as clipboard events, not keydowns).
+document.addEventListener('copy', (e) => { if (!isTyping() && selected()) { e.preventDefault(); doCopy(); } });
+document.addEventListener('cut', (e) => { if (!isTyping() && selected()) { e.preventDefault(); doCut(); } });
+document.addEventListener('paste', (e) => { if (!isTyping() && clip) { e.preventDefault(); doPaste(); } });
+
+/* ---------- shapes */
+const hueHex = (hue, s = 0.9, l = 0.6) => {
+  const f = (n) => { const k = (n + hue / 30) % 12; const c = l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1)); return Math.round(c * 255).toString(16).padStart(2, '0'); };
+  return `#${f(0)}${f(8)}${f(4)}`;
+};
+// Centre points for n items in a layout, spaced `step` apart around (cx, cy), kept inside the stage.
+function layoutPoints(n, layout, step, size, cx, cy) {
+  const W = state.stage.w, H = state.stage.h, m = size / 2;
+  if (layout === 'scatter') return Array.from({ length: n }, () => [m + Math.random() * (W - size), m + Math.random() * (H - size)]);
+  if (layout === 'ring') {
+    const R = Math.min(Math.max(step * n / (2 * Math.PI), step), Math.min(W, H) / 2 - m);
+    return Array.from({ length: n }, (_, i) => { const a = (i / n) * 2 * Math.PI - Math.PI / 2; return [cx + R * Math.cos(a), cy + R * Math.sin(a)]; });
+  }
+  if (layout === 'row') {
+    const st = Math.min(step, n > 1 ? (W - size) / (n - 1) : step);
+    return Array.from({ length: n }, (_, i) => [cx + (i - (n - 1) / 2) * st, cy]);
+  }
+  const cols = Math.ceil(Math.sqrt(n * (W / H))), rows = Math.ceil(n / cols);
+  const st = Math.min(step, cols > 1 ? (W - size) / (cols - 1) : step, rows > 1 ? (H - size) / (rows - 1) : step);
+  return Array.from({ length: n }, (_, i) => [cx + ((i % cols) - (cols - 1) / 2) * st, cy + (Math.floor(i / cols) - (rows - 1) / 2) * st]);
+}
+function shapeSurface(shape, cx, cy, size, name) {
+  const s = newSurface(cx - size / 2, cy - size / 2, size, size, name);
+  s.shape = shape;
+  return s;
+}
+function addOneShape(shape) {
+  const n = state.surfaces.length, size = state.stage.h * 0.25;
+  const pal = PALETTE[n % PALETTE.length];
+  const s = shapeSurface(shape, state.stage.w / 2 + ((n % 6) - 2.5) * 30, state.stage.h / 2 + ((n % 6) - 2.5) * 30, size, `${SHAPES[shape].label} ${n + 1}`);
+  s.layers.push(newLayer('gradient', { c1: pal[0], c2: pal[1] }));
+  state.surfaces.push(s);
+  sel.surface = s.id; sel.corner = null;
+  commit(); refreshUI(); changed();
+}
+const bulk = { shape: 'ellipse', count: 12, layout: 'grid', size: 10, colors: 'rainbow', color: '#ffffff', anim: 'pulse', stagger: true };
+function addManyShapes() {
+  const b = bulk, n = clamp(b.count | 0, 1, 200), size = (b.size / 100) * state.stage.h;
+  const pts = layoutPoints(n, b.layout, size * 1.4, size, state.stage.w / 2, state.stage.h / 2);
+  const group = uid();
+  pts.forEach(([x, y], i) => {
+    const s = shapeSurface(b.shape, x, y, size, `${SHAPES[b.shape].label} ${i + 1}`);
+    s.group = group;
+    const anim = b.anim !== 'none' ? { anim: b.anim, phase: b.stagger ? i / n : 0 } : {};
+    s.layers.push(b.colors === 'rainbow'
+      ? newLayer('gradient', { c1: hueHex((i / n) * 360), c2: hueHex((i / n) * 360 + 50, 0.9, 0.45), ...anim })
+      : newLayer('color', { color: b.color, ...anim }));
+    state.surfaces.push(s);
+    sel.surface = s.id;
+  });
+  sel.corner = null;
+  commit(); refreshUI(); changed();
+  PM.toast(`Added ${n} ${SHAPES[b.shape].label.toLowerCase()}s as a group. Drag one to move them all, hold ⌘ to move just one`);
+}
+const rpt = { count: 5, layout: 'row', spacing: 1.3, stagger: true };
+function repeatSurface(s) {
+  const n = clamp(rpt.count | 0, 1, 200);
+  const [w, hh] = surfSize(s.corners), [cx, cy] = centroid(s.corners);
+  const size = Math.max(w, hh), step = size * rpt.spacing;
+  let pts;
+  if (rpt.layout === 'row') pts = Array.from({ length: n }, (_, i) => [cx + (i + 1) * w * rpt.spacing, cy]);
+  else if (rpt.layout === 'grid') {
+    const cols = Math.ceil(Math.sqrt(n + 1));
+    pts = Array.from({ length: n }, (_, k) => { const i = k + 1; return [cx + (i % cols) * w * rpt.spacing, cy + Math.floor(i / cols) * hh * rpt.spacing]; });
+  } else pts = layoutPoints(n, rpt.layout, step, size, cx, cy);
+  s.group = s.group || uid();
+  const copies = pts.map(([x, y], i) => {
+    const c = clone(s);
+    c.id = uid();
+    c.name = `${s.name.replace(/ \d+$/, '')} ${i + 2}`;
+    c.corners = c.corners.map(([px, py]) => [px - cx + x, py - cy + y]);
+    c.layers.forEach((L) => { L.id = uid(); if (rpt.stagger && L.anim !== 'none') L.phase = (num(L.phase, 0) + (i + 1) / (n + 1)) % 1; });
+    return c;
+  });
+  state.surfaces.splice(state.surfaces.indexOf(s) + 1, 0, ...copies);
+  commit(); refreshUI(); changed();
+  const W = state.stage.w, H = state.stage.h;
+  const off = copies.filter((c) => { const [x, y] = centroid(c.corners); return x < 0 || y < 0 || x > W || y > H; }).length;
+  PM.toast(off ? `Made ${n} copies, but ${off} landed off-stage. Try lower Spacing or a Grid/Ring layout (⌘Z to undo)`
+    : `Made ${n} copies. They're grouped, so drag one to move them all`);
+}
+
 function moveSurface(id, dir) {
   const i = state.surfaces.findIndex((s) => s.id === id), j = i + dir;
   if (i < 0 || j < 0 || j >= state.surfaces.length) return;
@@ -907,6 +1089,8 @@ const ACTIONS = {
     commit(); refreshUI(); changed();
   },
   addMedia: () => pickMedia({ mode: 'newSurface' }),
+  shapes: () => toggleShapePop(),
+  copy: doCopy, cut: doCut, paste: doPaste,
   undo, redo,
   save: saveProject,
   open: openProject,
@@ -1058,7 +1242,7 @@ function renderInspector() {
     h('div', { class: 'group' },
       row('Opacity', slider(s, 'opacity', 0, 1, 0.01, (v) => Math.round(v * 100) + '%')),
       row('Blend', selectIn(s, 'blend', opts(BLENDS))),
-      row('Shape', selectIn(s, 'shape', { rect: 'Rectangle', ellipse: 'Ellipse' }))),
+      row('Shape', selectIn(s, 'shape', Object.fromEntries(Object.entries(SHAPES).map(([k, v]) => [k, v.label]))))),
     h('div', { class: 'panel-title' }, 'Warp'),
     h('div', { class: 'btns' }, ...[
       ['−', 'scaleDown', 'Shrink 5%'], ['+', 'scaleUp', 'Grow 5%'], ['⟲', 'rotL', 'Rotate −5°'], ['⟳', 'rotR', 'Rotate +5°'],
@@ -1068,7 +1252,28 @@ function renderInspector() {
       h('button', { class: 'small', onclick: () => { if (s.locked) return PM.toast('Surface is locked'); OPS.reset(s); commit(); changed(); } }, 'Unwarp'),
       h('button', { class: 'small', onclick: () => { if (s.locked) return PM.toast('Surface is locked'); OPS.fill(s); commit(); changed(); } }, 'Fill stage'),
       h('button', { class: 'small', onclick: duplicateSurface }, 'Duplicate'),
+      h('button', { class: 'small', title: 'Copy (⌘C)', onclick: doCopy }, 'Copy'),
       h('button', { class: 'small danger', onclick: () => deleteSurface(s.id) }, 'Delete')));
+
+  const grp = groupOf(s);
+  if (grp.length > 1) {
+    box.append(h('div', { class: 'panel-title' }, `Group · ${grp.length} surfaces`),
+      h('div', { class: 'hint', style: 'padding:0 12px 4px' }, 'Dragging or nudging moves the whole group. Hold ⌘ while dragging to move just this one.'),
+      h('div', { class: 'btns' },
+        h('button', { class: 'small', onclick: () => { grp.forEach((t) => (t.group = null)); commit(); refreshUI(); changed(); } }, 'Ungroup'),
+        h('button', { class: 'small', onclick: () => { s.group = null; commit(); refreshUI(); changed(); } }, 'Remove this one'),
+        h('button', { class: 'small danger', onclick: () => { const ids = new Set(grp.map((t) => t.id)); state.surfaces = state.surfaces.filter((t) => !ids.has(t.id)); sel.surface = null; commit(); refreshUI(); changed(); } }, 'Delete group')));
+  }
+
+  const rptBtn = h('button', { class: 'small primary', onclick: () => repeatSurface(s) }, `Make ${rpt.count} copies`);
+  box.append(h('div', { class: 'panel-title' }, 'Repeat'),
+    h('div', { class: 'group' },
+      row('Copies', slider(rpt, 'count', 1, 60, 1)),
+      row('Layout', selectIn(rpt, 'layout', { row: 'Row', grid: 'Grid', ring: 'Ring around it', scatter: 'Scatter' })),
+      row('Spacing', slider(rpt, 'spacing', 1, 3, 0.05, (v) => v.toFixed(2) + '×')),
+      row('', checkIn(rpt, 'stagger', 'Stagger animations (wave)')),
+      row('', rptBtn)));
+  box.lastChild.addEventListener('input', () => (rptBtn.textContent = `Make ${rpt.count} copies`));
 
   const addSel = h('select', {
     onchange: () => {
@@ -1082,6 +1287,12 @@ function renderInspector() {
     },
   }, h('option', { value: '' }, '+ Add layer'), ...Object.entries(LAYER_TYPES).map(([k, v]) => h('option', { value: k }, k === 'media' ? 'Media (image / GIF / video)…' : k === 'playlist' ? 'Playlist (many files, cycles)…' : v)));
   box.append(h('div', { class: 'layers-head' }, h('div', { class: 'panel-title' }, `Layers (${s.layers.length})`), addSel));
+  const others = state.surfaces.filter((t) => t.id !== s.id);
+  box.append(h('div', { class: 'btns' },
+    s.layers.length ? h('button', { class: 'small', onclick: () => copyLayers(s.layers, `all ${s.layers.length} layer(s) from ${s.name}`) }, '⧉ Copy all layers') : null,
+    clip && clip.kind === 'layers' ? h('button', { class: 'small primary', onclick: () => pasteLayersInto([s]) }, `Paste ${clip.layers.length} layer(s)`) : null,
+    clip && clip.kind === 'layers' && grp.length > 1 ? h('button', { class: 'small', onclick: () => pasteLayersInto(grp) }, `Paste to group (${grp.length})`) : null,
+    clip && clip.kind === 'layers' && others.length ? h('button', { class: 'small', onclick: () => pasteLayersInto(state.surfaces) }, `Paste to all (${state.surfaces.length})`) : null));
 
   if (!s.layers.length) box.append(h('div', { class: 'hint' }, 'Empty surface. Add a layer or drop media onto it.'));
   [...s.layers].reverse().forEach((L) => box.append(layerCard(s, L)));
@@ -1103,6 +1314,7 @@ function layerCard(s, L) {
     h('div', { class: 'card-head' },
       h('button', { class: 'ib', title: 'Collapse', onclick: () => { collapsed.has(L.id) ? collapsed.delete(L.id) : collapsed.add(L.id); card.classList.toggle('collapsed'); } }, '▾'),
       h('span', { class: 't' }, title, h('small', {}, L.type === 'media' ? L.kind : '')),
+      h('button', { class: 'ib', title: 'Copy this layer (paste into any surface)', onclick: () => copyLayers([L], `“${title}”`) }, '⧉'),
       h('button', { class: `ib${L.visible ? ' on' : ''}`, title: 'Toggle visibility', onclick: () => { L.visible = !L.visible; commit(); renderInspector(); changed(); } }, L.visible ? '◉' : '○'),
       h('button', { class: 'ib', title: 'Move up', onclick: () => move(1) }, '▲'),
       h('button', { class: 'ib', title: 'Move down', onclick: () => move(-1) }, '▼'),
@@ -1151,9 +1363,45 @@ function layerCard(s, L) {
     row('Opacity', slider(L, 'opacity', 0, 1, 0.01, (v) => Math.round(v * 100) + '%')),
     row('Blend', selectIn(L, 'blend', opts(BLENDS))),
     row('Animate', selectIn(L, 'anim', Object.fromEntries(Object.keys(ANIMS).map((k) => [k, k[0].toUpperCase() + k.slice(1)])), () => renderInspector())),
-    L.anim !== 'none' ? row('Speed', slider(L, 'speed', 0.1, 5, 0.05, (v) => v.toFixed(2) + '×')) : null);
+    L.anim !== 'none' ? row('Speed', slider(L, 'speed', 0.1, 5, 0.05, (v) => v.toFixed(2) + '×')) : null,
+    L.anim !== 'none' ? row('Offset', slider(L, 'phase', 0, 1, 0.01, (v) => Math.round(v * 100) + '%')) : null);
   return card;
 }
+
+/* ================================================================ SHAPES POPOVER */
+function toggleShapePop(force) {
+  const pop = $('shapePop');
+  const open = force != null ? force : pop.hidden;
+  pop.hidden = !open;
+  if (open) renderShapePop();
+}
+function renderShapePop() {
+  const pop = $('shapePop');
+  pop.textContent = '';
+  const swatch = (k) => h('span', { class: 'sw', style: `clip-path:${SHAPES[k].clip || 'none'}` });
+  const addBtn = h('button', { class: 'primary', style: 'width:100%;margin-top:6px', onclick: () => { addManyShapes(); toggleShapePop(false); } });
+  const label = () => (addBtn.textContent = `Add ${bulk.count} ${SHAPES[bulk.shape].label.toLowerCase()}s`);
+  label();
+  pop.append(
+    h('div', { class: 'pop-title' }, 'Add one shape'),
+    h('div', { class: 'shape-grid' }, ...Object.keys(SHAPES).map((k) =>
+      h('button', { class: 'shape-btn', title: SHAPES[k].label, onclick: () => { addOneShape(k); toggleShapePop(false); } }, swatch(k), h('span', {}, SHAPES[k].label)))),
+    h('div', { class: 'pop-title' }, 'Add lots at once'),
+    h('div', { class: 'group', style: 'padding:0' },
+      row('Shape', selectIn(bulk, 'shape', Object.fromEntries(Object.entries(SHAPES).map(([k, v]) => [k, v.label])), label)),
+      row('How many', slider(bulk, 'count', 2, 100, 1)),
+      row('Layout', selectIn(bulk, 'layout', { grid: 'Grid', row: 'Row', ring: 'Ring', scatter: 'Random scatter' })),
+      row('Size', slider(bulk, 'size', 2, 40, 1, (v) => v + '%')),
+      row('Colors', selectIn(bulk, 'colors', { rainbow: 'Rainbow', one: 'One color' }), colorIn(bulk, 'color')),
+      row('Animate', selectIn(bulk, 'anim', Object.fromEntries(Object.keys(ANIMS).map((k) => [k, k[0].toUpperCase() + k.slice(1)])))),
+      row('', checkIn(bulk, 'stagger', 'Stagger (ripple / wave)')),
+      addBtn));
+  pop.oninput = label;
+}
+document.addEventListener('pointerdown', (e) => {
+  const pop = $('shapePop');
+  if (!pop.hidden && !pop.contains(e.target) && !e.target.closest('[data-act="shapes"]')) toggleShapePop(false);
+}, true);
 
 /* ================================================================ DEMO + TUTORIAL */
 function loadDemo() {
@@ -1198,6 +1446,7 @@ const TUTORIAL = [
     title: '2 · Add a surface for each thing you light up',
     art: `<svg viewBox="0 0 360 180">${TG}<path d="${QUAD}" fill="url(#tg)" opacity=".9"/><path d="${QUAD}" fill="none" stroke="#fff" stroke-width="2"/><g fill="#fff" stroke="#5b8cff" stroke-width="3"><circle cx="200" cy="40" r="7"/><circle cx="320" cy="22" r="7"/><circle cx="326" cy="156" r="7"/><circle cx="196" cy="140" r="7"/></g><g fill="#5b8cff"><rect x="256" y="27" width="8" height="8" rx="2"/><rect x="319" y="85" width="8" height="8" rx="2"/></g><path d="M150 40 L188 40" stroke="#ff4fa3" stroke-width="3" marker-end="url(#ar)"/><defs><marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ff4fa3"/></marker></defs><text x="40" y="44" fill="#e8eaf0" font-size="12">drag corners</text><text x="40" y="100" fill="#e8eaf0" font-size="12">drag middle = move</text><text x="40" y="150" fill="#e8eaf0" font-size="12">edge squares = slant</text></svg>`,
     body: `<p>Click <b>+ Surface</b>. A surface is a shape you stretch over <b>one real object or one face</b> of it. For a box you'd use one surface per visible side.</p>
+      <p>Want circles, stars or hexagons? Click <b>◆ Shapes</b>. It can also drop in <b>dozens at once</b> as a grid, row, ring or random scatter, with ripple animations.</p>
       <ul><li><b>Drag the middle</b> to move it.</li><li><b>Drag the white corner dots</b> to pin each corner to a corner of the real object. This is how you bend it into perspective.</li><li><b>Drag the small edge squares</b> to slant one side.</li></ul>`,
   },
   {
@@ -1217,6 +1466,7 @@ const TUTORIAL = [
     title: '5 · Stack layers & effects',
     art: `<svg viewBox="0 0 360 180">${TG}<g transform="translate(110 30)"><path d="M0 100 L90 120 L180 100 L90 80Z" fill="#7c4dff" opacity=".9"/><path d="M0 75 L90 95 L180 75 L90 55Z" fill="#ff4fa3" opacity=".85"/><path d="M0 50 L90 70 L180 50 L90 30Z" fill="url(#tg)"/><path d="M0 25 L90 45 L180 25 L90 5Z" fill="#fff" opacity=".25"/></g><g fill="#8b92a3" font-size="11"><text x="20" y="62">Text</text><text x="20" y="88">Media</text><text x="20" y="112">Playlist</text><text x="20" y="136">Gradient</text></g></svg>`,
     body: `<p>Select a surface and use <b>+ Add layer</b> on the right: Color, Gradient, Media, Playlist, Text or Grid. Layers higher in the list sit on top.</p>
+      <p><b>Copy &amp; paste:</b> the <b>⧉</b> on a layer copies it, then <b>Paste</b> (or ⌘V) into any surface, or <b>Paste to all</b>. ⌘C / ⌘V on a selected surface copies the whole thing. <b>Repeat</b> makes N copies of a surface in a row, grid or ring.</p>
       <p>Every layer has <b>Opacity</b>, a <b>Blend</b> mode (try <i>Screen</i> or <i>Overlay</i>) and an <b>Animate</b> effect: pulse, strobe, flicker, hue cycle, spin, breathe or slide. They even work on still images.</p>`,
   },
   {
