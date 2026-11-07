@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Beam</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header id="toolbar">
+    <div class="brand"><img class="logo" src="logo.png" alt="">Beam</div>
+    <button class="primary" data-act="addSurface" title="New surface (⌘N)">+ Surface</button>
+    <button data-act="addMedia" title="Add images, GIFs, videos or whole folders (⌘I)">+ Media</button>
+    <span class="sep"></span>
+    <button class="icon" data-act="undo" title="Undo (⌘Z)">↶</button>
+    <button class="icon" data-act="redo" title="Redo (⇧⌘Z)">↷</button>
+    <span class="sep"></span>
+    <label class="toggle" title="Show a numbered alignment grid on every surface (⌘G)">
+      <input type="checkbox" id="calibrate"><span>Calibrate</span>
+    </label>
+    <div class="spacer"></div>
+    <div id="projector" class="native-only"><div id="projPill" class="pill idle"></div><select id="outputSel" title="Where the projection goes"></select></div>
+    <button class="browser-only" data-act="openOutput">Open Output Window</button>
+    <span class="sep"></span>
+    <button data-act="open" title="Open project (⌘O)">Open</button>
+    <button data-act="save" title="Save project (⌘S)">Save</button>
+    <button class="icon help" data-act="tutorial" title="Tutorial (⌘/)">?</button>
+  </header>
+
+  <aside id="left">
+    <div class="panel-title">Surfaces</div>
+    <div id="surfaceList"></div>
+    <div class="panel-title">Stage</div>
+    <div id="stagePanel"></div>
+    <div class="panel-title">Shortcuts</div>
+    <div class="shortcuts">
+      <div><kbd>Drop</kbd> files / folders on stage</div>
+      <div><kbd>Drag</kbd> body to move</div>
+      <div><kbd>Drag</kbd> corners to warp</div>
+      <div><kbd>Drag</kbd> edge dots to skew</div>
+      <div><kbd>⇧</kbd> lock axis while dragging</div>
+      <div><kbd>⌥</kbd> disable snapping</div>
+      <div><kbd>Tab</kbd> cycle corners</div>
+      <div><kbd>←↑→↓</kbd> nudge (<kbd>⇧</kbd> ×10)</div>
+      <div><kbd>⌘D</kbd> duplicate · <kbd>⌫</kbd> delete</div>
+      <div><kbd>Esc</kbd> on output: exit fullscreen</div>
+    </div>
+  </aside>
+
+  <main id="viewport">
+    <div id="stage"></div>
+    <svg id="overlay"></svg>
+    <div id="empty">
+      <img class="empty-logo" src="logo.png" alt="">
+      <div class="big">Drop GIFs, images, videos or a folder here</div>
+      <div>or click <b>+ Surface</b> to start mapping</div>
+      <div class="empty-btns"><button data-act="tutorial">Show me how</button><button data-act="demo">Load demo scene</button></div>
+    </div>
+  </main>
+
+  <aside id="right"><div id="inspector"></div></aside>
+</div>
+<div id="toast"></div>
+<div id="tutorial" hidden></div>
+<input type="file" id="fileInput" multiple accept="image/*,video/*" hidden>
+<input type="file" id="projectInput" accept=".json,application/json" hidden>
+<script src="app.js"></script>
+</body>
+</html>
