@@ -35,6 +35,7 @@ So I made **Beam**. It does the thing. It's free. It fits in 2.7 MB, which is sm
 - 🔌 **Plug-and-play HDMI.** Plug in the projector and Beam takes it over fullscreen with *only* your mapping on it: no menus, desktop or cursor. Your laptop keeps the editor. Unplug, replug, and it figures it out.
 - 🪞 **One-click mirroring fix.** macOS mirroring your screen to the projector? Beam notices and gives you a **Fix it** button. You will never again open System Settings → Displays in a panic five minutes before showtime.
 - 🖼️ **GIFs, videos, images.** Drag them in from Finder. GIF, MP4, MOV, WebM, PNG, JPG, HEIC, WebP. They loop. They're GPU-accelerated. They just work.
+- 📺 **YouTube, Vimeo & video links, with sound.** Paste a link (or just hit `⌘V`), or pick an MP4/MOV. It shows up big, and you drag the four corners onto the wall. Projector stuck off to the side at a weird angle? Doesn't matter: the picture comes out square. Pause, restart, volume and loop are built in.
 - ⭐ **Shapes, lots of them.** Circles, triangles, stars, hexagons, crosses, arrows and more. Add one, or drop in 100 at once as a grid, row, ring or random scatter, with rainbow colors and staggered *ripple* animations. They warp in perspective like everything else.
 - 🔁 **Repeat anything.** Make N copies of any surface, GIFs and all, in a row, grid or ring. Copies are grouped, so dragging one moves them all (hold `⌘` to grab just one).
 - 📋 **Copy & paste.** `⌘C`/`⌘V`/`⌘X` for surfaces. Copy any layer and paste it into one surface, the whole group, or every surface at once.
@@ -82,6 +83,7 @@ It downloads the latest release, puts **Beam** in your Applications folder and o
 | Move | Drag the middle |
 | Pixel-perfect | `Tab` picks a corner, arrow keys nudge (`⇧` = 10px) |
 | Stop snapping | Hold `⌥` while dragging |
+| Play YouTube / a video | **▶ Video / Link**, or copy a link and `⌘V` |
 | Lots of shapes | **◆ Shapes → Add lots at once** |
 | Copy / paste | `⌘C` / `⌘V` (surfaces) · ⧉ on a layer, then **Paste** / **Paste to all** |
 | Move one shape of a group | Hold `⌘` while dragging |
@@ -102,6 +104,7 @@ All you need is Xcode Command Line Tools (`xcode-select --install`). No npm, Coc
 - `Sources/main.swift` is the native AppKit shell. It runs two WebKit views (the editor and the output), detects display hot-plugs, unmirrors, keeps the display awake, and handles Finder drag-and-drop and file pickers.
 - `web/app.js` is the mapping engine. Each surface is a `<div>` with a CSS `matrix3d` homography computed from its four corners, so all the warping happens on the GPU and GIFs and videos play natively, with zero custom rendering code.
 - Playlists pick the current item from the wall clock, so the editor preview and the projector stay in sync for free.
+- YouTube won't play inside a `file://` page, so the app runs a tiny HTTP server on `127.0.0.1` that serves exactly one file (`web/yt.html`, the player wrapper). It's loopback-only and returns 404 for everything else. Arbitrary web pages are put in sandboxed iframes so they can't navigate Beam away.
 - Media is referenced by path, not copied. If you move your files, use **Replace…** on the layer.
 
 ## Contributing
@@ -121,4 +124,4 @@ Keep it simple. The whole point is that a normal human can use it.
 
 ---
 
-<sub><b>Keywords</b> (hi, search engines 👋): free projection mapping software for Mac · open source projection mapping · macOS video mapping app · projector mapping tool · free MadMapper alternative · free HeavyM alternative · free Resolume Arena alternative · free Millumin alternative · corner pin / keystone / perspective warp · projection mapping GIFs · building projection · stage visuals · VJ software Mac · Halloween projection · holiday window projection · event projection mapping · DIY projection mapping · projector HDMI fullscreen output Mac.</sub>
+<sub><b>Keywords</b> (hi, search engines 👋): free projection mapping software for Mac · open source projection mapping · macOS video mapping app · projector mapping tool · free MadMapper alternative · free HeavyM alternative · free Resolume Arena alternative · free Millumin alternative · project YouTube on a wall · keystone correction Mac · play video on projector at an angle · corner pin / keystone / perspective warp · projection mapping GIFs · building projection · stage visuals · VJ software Mac · Halloween projection · holiday window projection · event projection mapping · DIY projection mapping · projector HDMI fullscreen output Mac.</sub>

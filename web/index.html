@@ -13,6 +13,7 @@
     <button class="primary" data-act="addSurface" title="New surface (⌘N)">+ Surface</button>
     <button data-act="shapes" title="Circles, stars, hexagons… one or lots at once">◆ Shapes</button>
     <button data-act="addMedia" title="Add images, GIFs, videos or whole folders (⌘I)">+ Media</button>
+    <button data-act="playUrl" title="Play a YouTube / Vimeo / video link or a video file, with sound (⌘L)">▶ Video / Link</button>
     <span class="sep"></span>
     <button class="icon" data-act="undo" title="Undo (⌘Z)">↶</button>
     <button class="icon" data-act="redo" title="Redo (⇧⌘Z)">↷</button>
@@ -45,6 +46,7 @@
       <div><kbd>Tab</kbd> cycle corners</div>
       <div><kbd>←↑→↓</kbd> nudge (<kbd>⇧</kbd> ×10)</div>
       <div><kbd>⌘C</kbd> <kbd>⌘V</kbd> <kbd>⌘X</kbd> copy / paste / cut</div>
+      <div><kbd>⌘V</kbd> a YouTube link to play it</div>
       <div><kbd>⌘D</kbd> duplicate · <kbd>⌫</kbd> delete</div>
       <div><kbd>⌘</kbd>+drag move one shape of a group</div>
       <div><kbd>Esc</kbd> on output: exit fullscreen</div>
@@ -58,7 +60,8 @@
       <img class="empty-logo" src="logo.png" alt="">
       <div class="big">Drop GIFs, images, videos or a folder here</div>
       <div>or click <b>+ Surface</b> to start mapping</div>
-      <div class="empty-btns"><button data-act="tutorial">Show me how</button><button data-act="demo">Load demo scene</button></div>
+      <div>or click <b>▶ Video / Link</b> to play YouTube or a video on a wall</div>
+      <div class="empty-btns"><button data-act="tutorial">Show me how</button><button data-act="playUrl">Play a video</button><button data-act="demo">Load demo scene</button></div>
     </div>
   </main>
 
@@ -66,6 +69,7 @@
 </div>
 <div id="toast"></div>
 <div id="shapePop" hidden></div>
+<div id="urlPop" hidden></div>
 <div id="tutorial" hidden></div>
 <input type="file" id="fileInput" multiple accept="image/*,video/*" hidden>
 <input type="file" id="projectInput" accept=".json,application/json" hidden>

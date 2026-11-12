@@ -20,6 +20,50 @@ const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const safeColor = (c, d) => (typeof c === 'string' && /^#[0-9a-f]{3,8}$/i.test(c) ? c : d);
 const fileName = (u) => { try { return decodeURIComponent(String(u).split(/[\\/]/).pop().split(/[?#]/)[0]); } catch { return 'media'; } };
 
+// Turns pasted text into a layer: YouTube / Vimeo videos, direct media links, or any web page.
+// Returns { type, props }, { error }, or null when it isn't a link at all.
+function parseLink(text) {
+  let t = String(text || '').trim();
+  if (!t || /\s/.test(t) || t.length > 2048) return null;
+  if (!/^https?:\/\//i.test(t)) {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(t) || !/^[\w-]+(\.[\w-]+)+([/?#]|$)/.test(t)) return null;
+    t = 'https://' + t;
+  }
+  let u;
+  try { u = new URL(t); } catch { return null; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  const host = u.hostname.toLowerCase().replace(/^(www|m|music)\./, '');
+  const secs = (v) => {
+    if (!v) return 0;
+    if (/^\d+$/.test(v)) return +v;
+    const m = v.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+    return m ? (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0) : 0;
+  };
+  let vid = null, shorts = false;
+  if (host === 'youtu.be') vid = u.pathname.slice(1).split('/')[0];
+  else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    if (u.pathname === '/watch') vid = u.searchParams.get('v') || '';
+    else {
+      const m = u.pathname.match(/^\/(embed|shorts|live|v)\/([^/]+)/);
+      if (m) { vid = m[2]; shorts = m[1] === 'shorts'; }
+      else vid = ''; // a channel, playlist or search page: not something we can play
+    }
+  }
+  if (vid != null) {
+    if (!/^[A-Za-z0-9_-]{11}$/.test(vid)) return { error: 'That YouTube link doesn’t point at a video. Open the video itself, then copy its link.' };
+    return { type: 'web', props: { url: u.href, site: 'youtube', vid, start: secs(u.searchParams.get('t') || u.searchParams.get('start')),
+      aspect: shorts ? '9:16' : '16:9', name: shorts ? 'YouTube Short' : 'YouTube video' } };
+  }
+  if (host === 'vimeo.com' || host === 'player.vimeo.com') {
+    const m = u.pathname.match(/(?:^|\/)(\d{1,12})(?=\/|$)/);
+    if (m) return { type: 'web', props: { url: u.href, site: 'vimeo', vid: m[1], start: secs((u.hash.match(/t=([\dhms]+)/) || [])[1]), aspect: '16:9', name: 'Vimeo video' } };
+  }
+  if (MEDIA_RE.test(u.pathname)) {
+    return { type: 'media', props: { src: u.href, name: fileName(u.pathname) || host, kind: VIDEO_RE.test(u.pathname) ? 'video' : 'image' } };
+  }
+  return { type: 'web', props: { url: u.href, site: 'page', vid: '', name: host } };
+}
+
 const BLENDS = ['normal', 'screen', 'multiply', 'overlay', 'lighten', 'darken', 'color-dodge',
   'soft-light', 'hard-light', 'difference', 'exclusion', 'hue', 'color', 'luminosity'];
 // name: [base seconds, timing function]
@@ -27,11 +71,13 @@ const ANIMS = {
   none: null, pulse: [2, 'ease-in-out'], strobe: [0.2, 'linear'], flicker: [1.6, 'linear'],
   hue: [6, 'linear'], spin: [8, 'linear'], breathe: [4, 'ease-in-out'], slide: [4, 'linear'],
 };
-const LAYER_TYPES = { color: 'Color', gradient: 'Gradient', media: 'Media', playlist: 'Playlist', text: 'Text', grid: 'Grid' };
+const LAYER_TYPES = { color: 'Color', gradient: 'Gradient', media: 'Media', playlist: 'Playlist', web: 'Video link', text: 'Text', grid: 'Grid' };
 const LAYER_DEFAULTS = {
   color: { color: '#ff3d7f' },
   gradient: { c1: '#00e5ff', c2: '#7c4dff', angle: 45, kind: 'linear' },
-  media: { src: '', name: '', kind: 'image', fit: 'cover', rate: 1, audio: false },
+  media: { src: '', name: '', kind: 'image', fit: 'cover', rate: 1, audio: false, volume: 1, loop: true, paused: false, restart: 0 },
+  // YouTube / Vimeo (site + vid) or any web page (site 'page'). Playback is controlled by message, see web/yt.html.
+  web: { url: '', name: '', site: 'page', vid: '', start: 0, aspect: '16:9', fit: 'cover', zoom: 1, audio: true, volume: 1, loop: true, paused: false, restart: 0 },
   playlist: { items: [], duration: 5, fade: 1, fit: 'cover' },
   text: { text: 'HELLO', color: '#ffffff', size: 30, font: 'Helvetica Neue', weight: '800' },
   grid: { color: '#ffffff', div: 8 },
@@ -50,10 +96,11 @@ const SHAPES = {
   cross: { label: 'Cross', clip: 'polygon(35% 0, 65% 0, 65% 35%, 100% 35%, 100% 65%, 65% 65%, 65% 100%, 35% 100%, 35% 65%, 0 65%, 0 35%, 35% 35%)' },
   arrow: { label: 'Arrow', clip: 'polygon(0 30%, 60% 30%, 60% 0, 100% 50%, 60% 100%, 60% 70%, 0 70%)' },
 };
+const ASPECTS = { '16:9': 16 / 9, '9:16': 9 / 16, '4:3': 4 / 3, '1:1': 1, '21:9': 21 / 9 };
 const FONTS = ['Helvetica Neue', 'Avenir Next', 'Futura', 'Gill Sans', 'Impact', 'Georgia',
   'Didot', 'Menlo', 'Courier New', 'Marker Felt', 'Chalkduster', 'system-ui'];
-const VIDEO_RE = /\.(mp4|m4v|mov|webm|ogv)$/i;
-const MEDIA_RE = /\.(mp4|m4v|mov|webm|ogv|gif|png|jpe?g|webp|bmp|svg|heic|tiff?|avif)$/i;
+const VIDEO_RE = /\.(mp4|m4v|mov|webm|ogv|m3u8)$/i;
+const MEDIA_RE = /\.(mp4|m4v|mov|webm|ogv|m3u8|gif|png|jpe?g|webp|bmp|svg|heic|tiff?|avif)$/i;
 
 /* ------------------------------------------------------ homography (corner pin)
  * Maps the rectangle (0,0)-(w,h) onto an arbitrary quad and returns a CSS matrix3d.
@@ -150,6 +197,16 @@ function normalizeLayer(L) {
   out.phase = clamp(out.phase, 0, 1);
   for (const k of ['color', 'c1', 'c2']) if (k in out) out[k] = safeColor(out[k], base[k]);
   if (out.type === 'media') out.kind = out.kind === 'video' ? 'video' : 'image';
+  if ('volume' in out) out.volume = clamp(out.volume, 0, 1);
+  if (out.type === 'web') {
+    // Project files can come from anywhere: only http(s) pages, and only ids that match each site's format.
+    if (!/^https?:\/\//i.test(out.url)) out.url = '';
+    const ok = { youtube: /^[A-Za-z0-9_-]{11}$/, vimeo: /^[0-9]{1,12}$/ }[out.site];
+    if (!ok || !ok.test(out.vid)) { out.site = 'page'; out.vid = ''; }
+    out.aspect = out.aspect in ASPECTS ? out.aspect : '16:9';
+    out.zoom = clamp(out.zoom, 0.25, 4);
+    out.start = Math.max(0, out.start | 0);
+  }
   if (out.type === 'playlist') {
     out.items = (Array.isArray(L.items) ? L.items : [])
       .filter((it) => it && typeof it.src === 'string')
@@ -321,14 +378,22 @@ function renderLayers(el, s, w, h, opts) {
           le._src = L.src; le._kind = L.kind;
           m = null;
           if (L.src) { m = makeMedia(L.src, L.kind); fx.appendChild(m); }
+          le._restart = L.restart;
         }
         if (m) {
           m.style.objectFit = L.fit;
           if (L.kind === 'video') {
             const rate = clamp(num(L.rate, 1), 0.1, 4);
             if (m.playbackRate !== rate) m.playbackRate = rate;
+            // Sound only ever comes from the output (projector), never the editor preview, so you don't hear it twice.
             const muted = opts.editor || !L.audio;
             if (m.muted !== muted) { m.muted = muted; m.play().catch(() => {}); }
+            const vol = clamp(num(L.volume, 1), 0, 1);
+            if (m.volume !== vol) m.volume = vol;
+            m.loop = L.loop !== false;
+            if (le._restart !== L.restart) { le._restart = L.restart; m.currentTime = 0; }
+            if (L.paused) { if (!m.paused) m.pause(); }
+            else if (m.paused && !m.ended) m.play().catch(() => {});
           }
         }
         break;
@@ -341,6 +406,34 @@ function renderLayers(el, s, w, h, opts) {
         playlists.add(le);
         tickPlaylist(le);
         for (const m of fx.children) m.style.objectFit = L.fit;
+        break;
+      }
+      case 'web': {
+        const src = webSrc(L);
+        let f = fx.firstChild;
+        if (le._src !== src) {
+          fx.textContent = '';
+          le._src = src; le._sent = ''; le._restart = L.restart;
+          f = null;
+          if (src) {
+            f = document.createElement('iframe');
+            f.className = 'web';
+            f.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture');
+            f.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+            f.setAttribute('tabindex', '-1');
+            // Arbitrary web pages are sandboxed: they can run, but can't navigate Beam away or pop windows.
+            if (L.site === 'page') f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+            f.addEventListener('load', () => { le._sent = ''; sendWeb(le); });
+            f.src = src;
+            fx.appendChild(f);
+          }
+        }
+        if (f) {
+          layoutWeb(f, L, w, h);
+          le._webL = L;
+          le._muted = opts.editor || !L.audio;
+          sendWeb(le);
+        }
         break;
       }
       case 'text': {
@@ -361,6 +454,38 @@ function renderLayers(el, s, w, h, opts) {
     }
   });
   for (const [id, le] of map) if (!seen.has(id)) { le.remove(); map.delete(id); }
+}
+
+// YouTube/Vimeo play inside web/yt.html. In the Mac app it's served from Beam's localhost page server
+// (port injected at launch) because YouTube won't play embeds on a file:// page.
+function webSrc(L) {
+  if (L.site === 'page') return /^https?:\/\//i.test(L.url) ? L.url : '';
+  const base = NATIVE && window.__PM_WEBPORT ? `http://127.0.0.1:${window.__PM_WEBPORT}/yt.html` : 'yt.html';
+  return `${base}?site=${L.site}&v=${encodeURIComponent(L.vid)}&start=${L.start | 0}`;
+}
+// Players render at 1080p and are scaled into the surface, so the picture stays sharp on a projector.
+function layoutWeb(f, L, w, h) {
+  let fw, fh, sx, sy;
+  if (L.site === 'page') {
+    const z = clamp(num(L.zoom, 1), 0.25, 4);
+    fw = w / z; fh = h / z; sx = sy = z;
+  } else {
+    fh = 1080; fw = Math.round(1080 * (ASPECTS[L.aspect] || 16 / 9));
+    sx = w / fw; sy = h / fh;
+    if (L.fit === 'cover') sx = sy = Math.max(sx, sy);
+    else if (L.fit === 'contain') sx = sy = Math.min(sx, sy);
+  }
+  const x = (w - fw * sx) / 2, y = (h - fh * sy) / 2;
+  const css = `width:${fw.toFixed(1)}px;height:${fh.toFixed(1)}px;transform:translate(${x.toFixed(1)}px,${y.toFixed(1)}px) scale(${sx.toFixed(5)},${sy.toFixed(5)})`;
+  if (f._css !== css) { f._css = css; f.style.cssText = css; }
+}
+function sendWeb(le) {
+  const f = le._fx.firstChild, L = le._webL;
+  if (!f || !L || L.site === 'page' || !f.contentWindow) return;
+  const msg = { beam: 'set', muted: !!le._muted, volume: Math.round(clamp(num(L.volume, 1), 0, 1) * 100), loop: L.loop !== false, paused: !!L.paused };
+  const key = JSON.stringify(msg);
+  if (le._sent !== key) { le._sent = key; f.contentWindow.postMessage(msg, '*'); }
+  if (le._restart !== L.restart) { le._restart = L.restart; f.contentWindow.postMessage({ beam: 'restart' }, '*'); }
 }
 
 /* ================================================================ OUTPUT MODE */
@@ -636,7 +761,8 @@ document.addEventListener('keydown', (e) => {
     else if (key === 'g') { e.preventDefault(); toggleCalibrate(); }
     else if (key === 'c' && !isTyping() && selected()) { e.preventDefault(); doCopy(); }
     else if (key === 'x' && !isTyping() && selected()) { e.preventDefault(); doCut(); }
-    else if (key === 'v' && !isTyping() && clip) { e.preventDefault(); doPaste(); }
+    else if (key === 'v' && !isTyping() && NATIVE) { e.preventDefault(); post({ type: 'pasteRequest' }); }
+    else if (key === 'l' && !e.shiftKey) { e.preventDefault(); openUrlPop(); }
     return;
   }
   if (isTyping()) return;
@@ -695,6 +821,7 @@ const freshLayer = (L) => ({ ...clone(L), id: uid() });
 function copyLayers(layers, label) {
   if (!layers.length) return;
   clip = { kind: 'layers', layers: clone(layers) };
+  post({ type: 'copied' });
   PM.toast(`Copied ${label}. Select any surface and press ⌘V, or use Paste in the Layers panel`);
   renderInspector();
 }
@@ -706,6 +833,7 @@ function pasteLayersInto(targets) {
 }
 function copySurfaces(list) {
   clip = { kind: 'surfaces', surfaces: clone(list) };
+  post({ type: 'copied' });
   pasteCount = 0;
   PM.toast(list.length === 1 ? `Copied “${list[0].name}”. ⌘V to paste` : `Copied a group of ${list.length} surfaces. ⌘V to paste`);
   renderInspector();
@@ -750,7 +878,28 @@ function doPaste() {
 // Fallback for the Edit menu's Copy/Cut/Paste (they arrive as clipboard events, not keydowns).
 document.addEventListener('copy', (e) => { if (!isTyping() && selected()) { e.preventDefault(); doCopy(); } });
 document.addEventListener('cut', (e) => { if (!isTyping() && selected()) { e.preventDefault(); doCut(); } });
-document.addEventListener('paste', (e) => { if (!isTyping() && clip) { e.preventDefault(); doPaste(); } });
+document.addEventListener('paste', (e) => {
+  if (isTyping()) return;
+  e.preventDefault();
+  if (NATIVE) return post({ type: 'pasteRequest' }); // native reads the Mac clipboard and calls PM.onPaste
+  PM.onPaste(e.clipboardData ? e.clipboardData.getData('text/plain') : '');
+});
+// ⌘V: a copied link (YouTube, Vimeo, video file, web page) plays; otherwise paste Beam's own clipboard.
+PM.onPaste = (text) => {
+  const t = String(text || '').trim();
+  if (/^(https?:\/\/|www\.|youtu\.?be|m\.youtube|vimeo\.com)/i.test(t) && parseLink(t)) {
+    const s = selected();
+    addLink(t, s && !s.locked ? { mode: 'layer', sid: s.id } : { mode: 'wall' });
+    return;
+  }
+  if (clip) return doPaste();
+  PM.toast(t ? 'To play something, copy a YouTube, Vimeo or video link, then press ⌘V' : 'Nothing copied yet');
+};
+PM.onLink = (link, x, y) => {
+  const el = document.elementFromPoint(x, y);
+  const sEl = el && el.closest && el.closest('.surface');
+  addLink(link, sEl ? { mode: 'layer', sid: sEl.dataset.sid } : { mode: 'wall' });
+};
 
 /* ---------- shapes */
 const hueHex = (hue, s = 0.9, l = 0.6) => {
@@ -967,7 +1116,12 @@ function handleMedia(items, dropPt, groups) {
   const s = target.sid ? findSurface(target.sid) : null;
   const L = s && target.lid ? s.layers.find((l) => l.id === target.lid) : null;
 
-  if (target.mode === 'replace' && L) {
+  if (target.mode === 'wall') {
+    const it = all[0];
+    const layer = all.length > 1 ? newLayer('playlist', { items: all.map(plItem) })
+      : newLayer('media', { ...mediaProps(it), audio: it.kind === 'video' });
+    wallSurface(layer, all.length > 1 ? 'Wall playlist' : it.name.replace(/\.[^.]+$/, ''), null, all.length > 1 ? null : it);
+  } else if (target.mode === 'replace' && L) {
     Object.assign(L, mediaProps(all[0]));
   } else if (target.mode === 'playlistAdd' && L) {
     L.items.push(...all.map(plItem));
@@ -1000,6 +1154,61 @@ if (!NATIVE) {
     handleMedia(files.map((f) => ({ url: URL.createObjectURL(f), name: f.name, kind: f.type.startsWith('video') ? 'video' : 'image' })),
       { x: e.clientX, y: e.clientY });
   });
+}
+
+/* ---------- videos & links on a wall */
+// A surface shaped like the content, as big as the projector allows. Then you just drag its
+// four corners onto the wall's corners to straighten it out, however wonky the projector angle.
+function wallSurface(layer, name, ratio, probe) {
+  const W = state.stage.w, H = state.stage.h;
+  const s = newSurface(0, 0, W, H, String(name || 'Wall').slice(0, 40));
+  const shape = (r) => {
+    let w = W, h = W / r;
+    if (h > H) { h = H; w = H * r; }
+    s.corners = [[(W - w) / 2, (H - h) / 2], [(W + w) / 2, (H - h) / 2], [(W + w) / 2, (H + h) / 2], [(W - w) / 2, (H + h) / 2]];
+  };
+  if (ratio) shape(ratio);
+  s.layers.push(layer);
+  state.surfaces.push(s);
+  sel.surface = s.id; sel.corner = null;
+  if (probe) {
+    const snap = JSON.stringify(s.corners);
+    probeAspect(probe).then((r) => {
+      if (!r || JSON.stringify(s.corners) !== snap) return;
+      shape(r);
+      if (hist.stack[hist.i]) hist.stack[hist.i] = JSON.stringify(state); // same undo step
+      scheduleAutosave();
+      changed();
+    });
+  }
+  PM.toast('Now drag the 4 white corner dots onto the corners of your wall. Watch the wall, not the screen.');
+  return s;
+}
+// target: { mode: 'wall' } new surface · { mode: 'layer', sid } on a surface · { mode: 'replace', sid, lid }
+function addLink(text, target) {
+  const r = parseLink(text);
+  if (!r) { PM.toast('That doesn’t look like a link. Copy the address from your browser’s address bar.'); return false; }
+  if (r.error) { PM.toast(r.error); return false; }
+  const props = { ...r.props, audio: true };
+  target = target || { mode: 'wall' };
+  const s = target.sid ? findSurface(target.sid) : null;
+  const i = s && target.lid ? s.layers.findIndex((l) => l.id === target.lid) : -1;
+  if (target.mode === 'replace' && i >= 0) {
+    const old = s.layers[i];
+    s.layers[i] = newLayer(r.type, { ...props, id: old.id, opacity: old.opacity, blend: old.blend, fit: old.fit || 'cover' });
+    sel.surface = s.id;
+  } else if (target.mode === 'layer' && s) {
+    s.layers.push(newLayer(r.type, props));
+    sel.surface = s.id;
+    PM.toast(`Playing on “${s.name}”`);
+  } else {
+    wallSurface(newLayer(r.type, props), props.name,
+      r.type === 'web' ? (r.props.site === 'page' ? state.stage.w / state.stage.h : ASPECTS[r.props.aspect]) : null,
+      r.type === 'media' ? { url: props.src, kind: props.kind } : null);
+  }
+  if (r.type === 'web' && r.props.site === 'page') PM.toast('Added the web page. Some sites refuse to be shown inside other apps; if it stays blank, that site is blocking it.');
+  commit(); refreshUI(); changed();
+  return true;
 }
 
 /* ---------- projects */
@@ -1089,6 +1298,7 @@ const ACTIONS = {
     commit(); refreshUI(); changed();
   },
   addMedia: () => pickMedia({ mode: 'newSurface' }),
+  playUrl: () => openUrlPop(),
   shapes: () => toggleShapePop(),
   copy: doCopy, cut: doCut, paste: doPaste,
   undo, redo,
@@ -1158,8 +1368,8 @@ function textIn(obj, key, multiline, after) {
   i.value = obj[key];
   return i;
 }
-function checkIn(obj, key, label) {
-  const i = h('input', { type: 'checkbox', onchange: () => { obj[key] = i.checked; changed(); commit(); } });
+function checkIn(obj, key, label, after) {
+  const i = h('input', { type: 'checkbox', onchange: () => { obj[key] = i.checked; changed(); commit(); after && after(); } });
   i.checked = !!obj[key];
   return h('label', { class: 'toggle', style: 'padding:2px 0' }, i, h('span', {}, label));
 }
@@ -1282,10 +1492,11 @@ function renderInspector() {
       if (!t) return;
       if (t === 'media') return pickMedia({ mode: 'addLayer', sid: s.id });
       if (t === 'playlist') return pickMedia({ mode: 'newPlaylist', sid: s.id });
+      if (t === 'web') return openUrlPop({ mode: 'layer', sid: s.id });
       s.layers.push(newLayer(t));
       commit(); renderInspector(); changed();
     },
-  }, h('option', { value: '' }, '+ Add layer'), ...Object.entries(LAYER_TYPES).map(([k, v]) => h('option', { value: k }, k === 'media' ? 'Media (image / GIF / video)…' : k === 'playlist' ? 'Playlist (many files, cycles)…' : v)));
+  }, h('option', { value: '' }, '+ Add layer'), ...Object.entries(LAYER_TYPES).map(([k, v]) => h('option', { value: k }, k === 'media' ? 'Media (image / GIF / video)…' : k === 'playlist' ? 'Playlist (many files, cycles)…' : k === 'web' ? 'YouTube / video link / web page…' : v)));
   box.append(h('div', { class: 'layers-head' }, h('div', { class: 'panel-title' }, `Layers (${s.layers.length})`), addSel));
   const others = state.surfaces.filter((t) => t.id !== s.id);
   box.append(h('div', { class: 'btns' },
@@ -1306,14 +1517,14 @@ function layerCard(s, L) {
     [s.layers[idx], s.layers[j]] = [s.layers[j], s.layers[idx]];
     commit(); renderInspector(); changed();
   };
-  const title = L.type === 'media' ? L.name || 'Media' : L.type === 'text' ? `“${L.text.slice(0, 18)}”`
+  const title = L.type === 'media' || L.type === 'web' ? L.name || 'Media' : L.type === 'text' ? `“${L.text.slice(0, 18)}”`
     : L.type === 'playlist' ? `Playlist (${L.items.length})` : LAYER_TYPES[L.type];
   const body = h('div', { class: 'card-body' });
   const add = (...kids) => body.append(...kids.filter((k) => k != null)); // append(null) would print "null"
   const card = h('div', { class: `card${collapsed.has(L.id) ? ' collapsed' : ''}${L.visible ? '' : ' off'}` },
     h('div', { class: 'card-head' },
       h('button', { class: 'ib', title: 'Collapse', onclick: () => { collapsed.has(L.id) ? collapsed.delete(L.id) : collapsed.add(L.id); card.classList.toggle('collapsed'); } }, '▾'),
-      h('span', { class: 't' }, title, h('small', {}, L.type === 'media' ? L.kind : '')),
+      h('span', { class: 't' }, title, h('small', {}, L.type === 'media' ? L.kind : L.type === 'web' ? { youtube: 'YouTube', vimeo: 'Vimeo', page: 'web page' }[L.site] : '')),
       h('button', { class: 'ib', title: 'Copy this layer (paste into any surface)', onclick: () => copyLayers([L], `“${title}”`) }, '⧉'),
       h('button', { class: `ib${L.visible ? ' on' : ''}`, title: 'Toggle visibility', onclick: () => { L.visible = !L.visible; commit(); renderInspector(); changed(); } }, L.visible ? '◉' : '○'),
       h('button', { class: 'ib', title: 'Move up', onclick: () => move(1) }, '▲'),
@@ -1334,8 +1545,17 @@ function layerCard(s, L) {
       add(
         row('Fit', selectIn(L, 'fit', { cover: 'Cover (crop)', contain: 'Contain', fill: 'Stretch' })),
         L.kind === 'video' ? row('Speed', slider(L, 'rate', 0.1, 4, 0.05, (v) => v.toFixed(2) + '×')) : null,
-        L.kind === 'video' ? row('', checkIn(L, 'audio', 'Play audio on output')) : null,
+        ...(L.kind === 'video' ? playbackRows(L) : []),
         row('', h('button', { class: 'small', onclick: () => pickMedia({ mode: 'replace', sid: s.id, lid: L.id }) }, 'Replace…')));
+      break;
+    case 'web':
+      add(
+        h('div', { class: 'hint url-line', title: L.url }, L.url),
+        L.site === 'page' ? row('Zoom', slider(L, 'zoom', 0.25, 3, 0.05, (v) => Math.round(v * 100) + '%')) : null,
+        L.site !== 'page' ? row('Video shape', selectIn(L, 'aspect', { '16:9': '16:9 (normal)', '9:16': '9:16 (Shorts / vertical)', '4:3': '4:3 (old TV)', '1:1': '1:1 (square)', '21:9': '21:9 (cinema)' })) : null,
+        L.site !== 'page' ? row('Fit', selectIn(L, 'fit', { cover: 'Cover (crop)', contain: 'Contain', fill: 'Stretch' })) : null,
+        ...(L.site !== 'page' ? playbackRows(L) : []),
+        row('', h('button', { class: 'small', onclick: () => openUrlPop({ mode: 'replace', sid: s.id, lid: L.id }) }, 'Change link…')));
       break;
     case 'playlist':
       add(
@@ -1368,8 +1588,61 @@ function layerCard(s, L) {
   return card;
 }
 
+// Play / pause / restart / sound controls for videos and video links. Restart is a counter in the
+// project state, so the projector's copy jumps back to the start too.
+function playbackRows(L) {
+  const redraw = () => { commit(); renderInspector(); changed(); };
+  return [
+    h('div', { class: 'btns', style: 'padding:2px 0 6px' },
+      h('button', { class: 'small', onclick: () => { L.paused = !L.paused; redraw(); } }, L.paused ? '▶ Play' : '❚❚ Pause'),
+      h('button', { class: 'small', title: 'Jump back to the beginning, on the projector too', onclick: () => { L.restart = (L.restart | 0) + 1; L.paused = false; redraw(); } }, '⟲ Restart')),
+    row('', checkIn(L, 'audio', 'Sound (from the projector output)', () => renderInspector())),
+    L.audio ? row('Volume', slider(L, 'volume', 0, 1, 0.01, (v) => Math.round(v * 100) + '%')) : null,
+    row('', checkIn(L, 'loop', 'Loop')),
+  ];
+}
+
+/* ================================================================ VIDEO / LINK POPOVER */
+const urlPrefs = { where: 'wall' };
+let urlTarget = null;
+function openUrlPop(target) {
+  toggleShapePop(false);
+  urlTarget = target || null;
+  $('urlPop').hidden = false;
+  renderUrlPop();
+}
+function closeUrlPop() { $('urlPop').hidden = true; urlTarget = null; }
+function renderUrlPop() {
+  const pop = $('urlPop');
+  pop.textContent = '';
+  const s = selected();
+  const fixed = urlTarget; // opened from a specific surface or layer
+  const input = h('input', { type: 'text', class: 'url-in', placeholder: 'Paste a YouTube, Vimeo or video link…', spellcheck: 'false', autocomplete: 'off' });
+  const go = () => {
+    const tgt = fixed || (urlPrefs.where === 'layer' && s ? { mode: 'layer', sid: s.id } : { mode: 'wall' });
+    if (addLink(input.value, tgt)) closeUrlPop();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); go(); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeUrlPop(); }
+  });
+  pop.append(
+    h('div', { class: 'pop-title' }, fixed && fixed.mode === 'replace' ? 'Change the link' : 'Play a video or link'),
+    input,
+    h('div', { class: 'hint', style: 'padding:6px 0 0' }, 'YouTube (incl. Shorts), Vimeo, direct .mp4 / .mov / .m3u8 links, or any web page.'),
+    !fixed && s ? row('Put it', selectIn(urlPrefs, 'where', { wall: 'New surface, fit to the wall', layer: `On “${s.name}”` })) : null,
+    h('button', { class: 'primary', style: 'width:100%;margin-top:8px', onclick: go }, '▶ Play it'),
+    fixed ? null : h('div', { class: 'pop-title' }, 'Or a file on this Mac'),
+    fixed ? null : h('button', { style: 'width:100%', onclick: () => { closeUrlPop(); pickMedia({ mode: 'wall' }); } }, 'Choose a video, GIF or image…'),
+    h('div', { class: 'hint', style: 'padding:10px 0 0' },
+      'It shows up big with sound on. Drag its 4 corner dots onto the corners of your wall to straighten it out, even if the projector is off to the side. ',
+      h('b', {}, 'Shortcut:'), ' copy a link anywhere and press ⌘V in Beam, or drag a link in from your browser.'));
+  setTimeout(() => input.focus(), 0);
+}
+
 /* ================================================================ SHAPES POPOVER */
 function toggleShapePop(force) {
+  if (force !== false) closeUrlPop();
   const pop = $('shapePop');
   const open = force != null ? force : pop.hidden;
   pop.hidden = !open;
@@ -1401,6 +1674,8 @@ function renderShapePop() {
 document.addEventListener('pointerdown', (e) => {
   const pop = $('shapePop');
   if (!pop.hidden && !pop.contains(e.target) && !e.target.closest('[data-act="shapes"]')) toggleShapePop(false);
+  const up = $('urlPop');
+  if (!up.hidden && !up.contains(e.target) && !e.target.closest('[data-act="playUrl"]') && !e.target.closest('#inspector')) closeUrlPop();
 }, true);
 
 /* ================================================================ DEMO + TUTORIAL */
@@ -1463,14 +1738,21 @@ const TUTORIAL = [
       <ul><li>Drop on <b>empty space</b>: each file gets its own surface.</li><li>Drop on <b>a surface</b>: it fills that surface. Several files at once become a <b>Playlist</b> that cycles with crossfades.</li><li>Drop a <b>whole folder</b> on empty space for a neat grid of surfaces, or onto a surface for a playlist.</li></ul>`,
   },
   {
-    title: '5 · Stack layers & effects',
+    title: '5 · YouTube & videos on a crooked wall',
+    art: `<svg viewBox="0 0 360 180">${TG}<circle cx="52" cy="128" r="22" fill="#14161e" stroke="#3a4157" stroke-width="5"/><circle cx="52" cy="128" r="9" fill="#bfe9ff"/><path d="M70 118 L322 20 L330 166 L72 138Z" fill="#8fb4ff" opacity=".12"/><path d="M196 40 L322 20 L330 166 L190 140Z" fill="#ff3d3d"/><path d="M248 74 L282 92 L248 112Z" fill="#fff"/><g fill="#fff" stroke="#5b8cff" stroke-width="3"><circle cx="196" cy="40" r="6"/><circle cx="322" cy="20" r="6"/><circle cx="330" cy="166" r="6"/><circle cx="190" cy="140" r="6"/></g><text x="22" y="40" fill="#e8eaf0" font-size="12">projector off to the side?</text><text x="22" y="58" fill="#3dffa8" font-size="12" font-weight="700">pin the corners. fixed.</text><text x="22" y="86" fill="#8b92a3" font-size="11">🔊 sound plays too</text></svg>`,
+    body: `<p>Click <b>▶ Video / Link</b> and paste a <b>YouTube</b>, Vimeo or video link, or choose a <b>video file</b> (MP4, MOV…). Even quicker: copy a link anywhere and press <kbd>⌘V</kbd> in Beam.</p>
+      <p>It appears big, with <b>sound on</b>. If the projector isn't pointed straight at the wall, the picture will look slanted, so <b>drag its 4 corner dots onto the 4 corners of the wall</b>. Beam bends it back into a perfect rectangle.</p>
+      <p>The layer has <b>Pause</b>, <b>Restart</b>, <b>Volume</b> and <b>Loop</b>. Sound comes out of whatever your Mac's sound output is. Pick the projector's HDMI in <i>System Settings → Sound</i> to use its speakers.</p>`,
+  },
+  {
+    title: '6 · Stack layers & effects',
     art: `<svg viewBox="0 0 360 180">${TG}<g transform="translate(110 30)"><path d="M0 100 L90 120 L180 100 L90 80Z" fill="#7c4dff" opacity=".9"/><path d="M0 75 L90 95 L180 75 L90 55Z" fill="#ff4fa3" opacity=".85"/><path d="M0 50 L90 70 L180 50 L90 30Z" fill="url(#tg)"/><path d="M0 25 L90 45 L180 25 L90 5Z" fill="#fff" opacity=".25"/></g><g fill="#8b92a3" font-size="11"><text x="20" y="62">Text</text><text x="20" y="88">Media</text><text x="20" y="112">Playlist</text><text x="20" y="136">Gradient</text></g></svg>`,
     body: `<p>Select a surface and use <b>+ Add layer</b> on the right: Color, Gradient, Media, Playlist, Text or Grid. Layers higher in the list sit on top.</p>
       <p><b>Copy &amp; paste:</b> the <b>⧉</b> on a layer copies it, then <b>Paste</b> (or ⌘V) into any surface, or <b>Paste to all</b>. ⌘C / ⌘V on a selected surface copies the whole thing. <b>Repeat</b> makes N copies of a surface in a row, grid or ring.</p>
       <p>Every layer has <b>Opacity</b>, a <b>Blend</b> mode (try <i>Screen</i> or <i>Overlay</i>) and an <b>Animate</b> effect: pulse, strobe, flicker, hue cycle, spin, breathe or slide. They even work on still images.</p>`,
   },
   {
-    title: '6 · Showtime',
+    title: '7 · Showtime',
     art: `<svg viewBox="0 0 360 180">${TG}<circle cx="70" cy="90" r="26" fill="#14161e" stroke="#3a4157" stroke-width="5"/><circle cx="70" cy="90" r="11" fill="#bfe9ff"/><path d="M90 78 L300 24 L306 160 L90 102Z" fill="#8fb4ff" opacity=".15"/><path d="M240 34 L300 24 L306 160 L238 148Z" fill="url(#tg)"/><text x="170" y="96" fill="#3dffa8" font-size="30" font-weight="800" text-anchor="middle">✓</text></svg>`,
     body: `<ul><li><b>Save</b> your mapping with ⌘S. Beam also autosaves constantly.</li><li>Your Mac and the projector <b>won't go to sleep</b> while Beam is projecting.</li><li>Unplug HDMI and the output returns to a preview window. Plug it back in and it jumps straight back to the projector.</li><li>Pressing <kbd>Esc</kbd> on a fullscreen output always gets you out.</li></ul>`,
     final: true,

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Beam player</title>
+<!--
+  Wraps a YouTube or Vimeo player so it can live inside a Beam surface.
+  In the Mac app this page is served from http://127.0.0.1 (see LocalPageServer in main.swift),
+  because YouTube won't play embeds that have no web origin. Beam controls it with postMessage:
+    { beam: 'set', muted, volume (0-100), loop, paused }   { beam: 'restart' }
+  Only messages from the parent frame are accepted, and only ids matching a strict pattern are used.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #p, iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  #err { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; text-align: center;
+    color: #fff; font: 600 28px -apple-system, Helvetica, sans-serif; padding: 40px; background: #200; }
+</style>
+</head>
+<body>
+<div id="p"></div>
+<div id="err"></div>
+<script>
+(function () {
+  'use strict';
+  var q = new URLSearchParams(location.search);
+  var site = q.get('site');
+  var id = q.get('v') || '';
+  var start = Math.max(0, Math.floor(+q.get('start') || 0));
+  // Start muted (always allowed to autoplay); Beam unmutes the projector copy right after load.
+  var want = { muted: true, volume: 100, loop: q.get('loop') !== '0', paused: false };
+  var player = null, ready = false;
+
+  function fail(msg) { var e = document.getElementById('err'); e.textContent = msg; e.style.display = 'flex'; }
+
+  /* ---------------- YouTube (IFrame Player API) */
+  function ytApply() {
+    if (!ready) return;
+    want.muted ? player.mute() : player.unMute();
+    player.setVolume(want.volume);
+    var st = player.getPlayerState();
+    if (want.paused) { if (st === 1 || st === 3) player.pauseVideo(); }
+    else if (st !== 1 && st !== 3) player.playVideo();
+  }
+  function ytInit() {
+    player = new YT.Player('p', {
+      videoId: id,
+      playerVars: { autoplay: 1, mute: 1, controls: 0, rel: 0, playsinline: 1, modestbranding: 1,
+        iv_load_policy: 3, disablekb: 1, fs: 0, start: start },
+      events: {
+        onReady: function () { ready = true; ytApply(); },
+        onStateChange: function (e) {
+          if (e.data === 0 && want.loop) { player.seekTo(start, true); player.playVideo(); }
+        },
+        onError: function (e) {
+          var why = { 2: 'That YouTube link looks broken.', 5: 'This video can’t play in an embedded player.',
+            100: 'That video was removed or is private.', 101: 'The owner doesn’t allow this video to be embedded.',
+            150: 'The owner doesn’t allow this video to be embedded.', 153: 'YouTube refused to load the player here.' }[e.data];
+          fail((why || 'YouTube error ' + e.data) + ' Try another video, or use a video file.');
+        },
+      },
+    });
+  }
+
+  /* ---------------- Vimeo (postMessage player API) */
+  var vimeo = null;
+  function vimeoCmd(method, value) {
+    if (vimeo) vimeo.contentWindow.postMessage(JSON.stringify(value === undefined ? { method: method } : { method: method, value: value }), 'https://player.vimeo.com');
+  }
+  function vimeoApply() {
+    vimeoCmd('setVolume', want.muted ? 0 : want.volume / 100);
+    vimeoCmd('setLoop', want.loop);
+    vimeoCmd(want.paused ? 'pause' : 'play');
+  }
+
+  function apply() { if (site === 'youtube') ytApply(); else if (site === 'vimeo') vimeoApply(); }
+
+  if (site === 'youtube' && /^[A-Za-z0-9_-]{11}$/.test(id)) {
+    window.onYouTubeIframeAPIReady = ytInit;
+    var s = document.createElement('script');
+    s.src = 'https://www.youtube.com/iframe_api';
+    s.onerror = function () { fail('Couldn’t reach YouTube. Is this Mac online?'); };
+    document.head.appendChild(s);
+  } else if (site === 'vimeo' && /^[0-9]{1,12}$/.test(id)) {
+    vimeo = document.createElement('iframe');
+    vimeo.allow = 'autoplay; fullscreen; picture-in-picture';
+    vimeo.src = 'https://player.vimeo.com/video/' + id + '?autoplay=1&muted=1&controls=0&autopause=0&dnt=1&loop=' + (want.loop ? 1 : 0) +
+      (start ? '#t=' + start + 's' : '');
+    vimeo.onload = function () { ready = true; setTimeout(vimeoApply, 300); };
+    document.getElementById('p').appendChild(vimeo);
+  } else {
+    fail('Not a video link Beam understands.');
+  }
+
+  window.addEventListener('message', function (e) {
+    if (e.source !== window.parent || !e.data || typeof e.data !== 'object') return;
+    var d = e.data;
+    if (d.beam === 'set') {
+      if (typeof d.muted === 'boolean') want.muted = d.muted;
+      if (typeof d.volume === 'number') want.volume = Math.max(0, Math.min(100, Math.round(d.volume)));
+      if (typeof d.loop === 'boolean') want.loop = d.loop;
+      if (typeof d.paused === 'boolean') want.paused = d.paused;
+      apply();
+    } else if (d.beam === 'restart') {
+      if (site === 'youtube' && ready) { player.seekTo(start, true); if (!want.paused) player.playVideo(); }
+      else if (site === 'vimeo') { vimeoCmd('setCurrentTime', start); if (!want.paused) vimeoCmd('play'); }
+    }
+  });
+})();
+</script>
+</body>
+</html>

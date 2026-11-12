@@ -278,12 +278,20 @@ button.help { border-radius: 50%; width: 28px; height: 28px; padding: 0; font-we
 #overlay .outline.grp { stroke: var(--accent); stroke-opacity: .55; stroke-dasharray: 3 3; }
 
 /* shapes popover */
-#shapePop {
+#shapePop, #urlPop {
   position: fixed; top: 52px; left: 300px; z-index: 15; width: 330px; max-height: calc(100vh - 70px); overflow-y: auto;
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px 12px 12px;
   box-shadow: 0 24px 70px rgba(0, 0, 0, .6); animation: tut-in .15s ease;
 }
-#shapePop[hidden] { display: none; }
+#shapePop[hidden], #urlPop[hidden] { display: none; }
+#urlPop { left: 380px; width: 380px; }
+#urlPop .row { grid-template-columns: 56px 1fr; }
+.url-in { width: 100%; box-sizing: border-box; font-size: 14px; padding: 9px 10px; background: var(--panel2);
+  border: 1px solid var(--line); border-radius: 7px; -webkit-user-select: text; user-select: text; }
+.url-in:focus { outline: none; border-color: var(--accent); }
+.url-line { padding: 0 0 6px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* video links / web pages inside a surface: never steal the mouse from dragging */
+.web { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; pointer-events: none; background: #000; }
 .pop-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); font-weight: 600; margin: 12px 0 8px; }
 .shape-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
 .shape-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 2px 6px; font-size: 10px; }
